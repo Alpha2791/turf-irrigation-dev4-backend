@@ -16,7 +16,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://amazing-buttercream-dacb76.netlify.app",
-        "http://localhost:3001"  # Keep this if you still test locally
+        "http://localhost:3001"
     ],
     allow_credentials=True,
     allow_methods=["*"],
