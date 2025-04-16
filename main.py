@@ -14,7 +14,10 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3001"],
+    allow_origins=[
+        "https://amazing-buttercream-dacb76.netlify.app",
+        "http://localhost:3001"  # Keep this if you still test locally
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
