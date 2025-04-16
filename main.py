@@ -15,7 +15,8 @@ app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://amazing-buttercream-dacb76.netlify.app",
+        "https://turf-tracker-trail.netlify.app",
+        "https://amazing-buttercream-dacb76.netlify.app",  # optional: keep for safety
         "http://localhost:3001"
     ],
     allow_credentials=True,
