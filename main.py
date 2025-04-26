@@ -70,27 +70,27 @@ def log_irrigation(timestamp: str = Body(...), irrigation_mm: float = Body(...))
 
 @app.get("/predicted-moisture")
 def get_predicted_moisture():
-    print("\uD83D\uDD04 Running /predicted-moisture endpoint")
+    print("Running /predicted-moisture endpoint")
 
     if not os.path.exists(MODEL_FILE):
         raise HTTPException(status_code=500, detail="Model file not found")
 
     try:
         model = joblib.load(MODEL_FILE)
-        print("\uD83D\uDD27 Model loaded successfully")
+        print("Model loaded successfully")
 
         now = datetime.utcnow()
         start_date = (now - timedelta(days=3)).strftime("%Y-%m-%d")
         end_date = (now + timedelta(days=5)).strftime("%Y-%m-%d")
 
         url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/{LATITUDE},{LONGITUDE}/{start_date}/{end_date}?unitGroup=metric&key={VC_API_KEY}&include=hours&elements=datetime,temp,humidity,windspeed,solarradiation,precip"
-        print(f"\ud83d\udc43 Weather API URL: {url}")
+        print(f"Weather API URL: {url}")
 
         response = requests.get(url)
-        print(f"\ud83d\udce3 Weather API status code: {response.status_code}")
+        print(f"Weather API status code: {response.status_code}")
 
         if response.status_code != 200:
-            print(f"\u274c Weather API response error: {response.text}")
+            print(f"Weather API response error: {response.text}")
             raise HTTPException(status_code=500, detail=f"Weather API error: {response.status_code} - {response.text}")
 
         data = response.json()
@@ -139,7 +139,7 @@ def get_predicted_moisture():
         last_pred = df_moist.iloc[-1]["moisture_mm"] if not df_moist.empty else 25.0
         sample_count = len(df_moist)
 
-        print(f"\ud83d\udd22 Sample count: {sample_count}")
+        print(f"Sample count: {sample_count}")
 
         for ts, row in df.iterrows():
             hour = ts.hour
@@ -171,11 +171,11 @@ def get_predicted_moisture():
 
             last_pred = predicted_moisture
 
-        print(f"\ud83d\udcca Returning {len(results)} forecast points.")
+        print(f"Returning {len(results)} forecast points.")
         return results
 
     except Exception as e:
-        print(f"\u274c Unexpected error in predicted moisture: {str(e)}")
+        print(f"Unexpected error in predicted moisture: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
 
 @app.get("/wilt-forecast")
