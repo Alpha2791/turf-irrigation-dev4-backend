@@ -25,9 +25,9 @@ app.add_middleware(
 )
 
 MODEL_FILE = "moisture_model.pkl"
-LATITUDE = 51.678929
-LONGITUDE = -1.362154
-ELEVATION = 69
+LATITUDE = 50.415642
+LONGITUDE = -5.092041
+ELEVATION = 39
 VC_API_KEY = "2ELL5E9A47JT5XB74WGXS7PFV"
 
 @app.on_event("startup")
