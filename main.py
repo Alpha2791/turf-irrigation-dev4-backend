@@ -15,13 +15,14 @@ app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://turf-tracker-dev2.netlify.app/",
+        "https://turf-irrigation-dev2.netlify.app", 
         "http://localhost:3000"
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 MODEL_FILE = "moisture_model.pkl"
 LATITUDE = 50.415642
