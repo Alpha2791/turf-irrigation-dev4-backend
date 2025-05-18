@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Body, HTTPException
+from fastapi import FastAPI, Body, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from datetime import datetime, timedelta
@@ -7,8 +7,7 @@ import pandas as pd
 import joblib
 import xgboost as xgb
 import os
-
-from models import MoistureLog, IrrigationLog
+from models import MoistureLog, IrrigationLog, WeatherHistory, PredictionMeta
 from database import Base, engine, SessionLocal
 
 app = FastAPI()
@@ -16,7 +15,7 @@ app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://turf-tracker-dev2.netlify.app",
+        "https://turf-irrigation-dev1.netlify.app",
         "http://localhost:3000"
     ],
     allow_credentials=True,
@@ -34,6 +33,19 @@ VC_API_KEY = "2ELL5E9A47JT5XB74WGXS7PFV"
 def startup():
     Base.metadata.create_all(bind=engine)
 
+def get_last_weather_timestamp(db):
+    entry = db.query(PredictionMeta).filter_by(key="last_weather_timestamp").first()
+    return datetime.fromisoformat(entry.value) if entry else None
+
+def set_last_weather_timestamp(db, timestamp):
+    entry = db.query(PredictionMeta).filter_by(key="last_weather_timestamp").first()
+    if entry:
+        entry.value = timestamp.isoformat()
+    else:
+        entry = PredictionMeta(key="last_weather_timestamp", value=timestamp.isoformat())
+        db.add(entry)
+    db.commit()
+
 @app.get("/moisture-log")
 def get_moisture_log():
     db = SessionLocal()
@@ -49,7 +61,7 @@ def get_irrigation_log():
     return [{"timestamp": e.timestamp.isoformat(), "irrigation_mm": e.irrigation_mm} for e in entries]
 
 @app.post("/log-moisture")
-def log_moisture(timestamp: str = Body(...), moisture_mm: float = Body(...)):
+def log_moisture(request: Request, timestamp: str = Body(...), moisture_mm: float = Body(...)):
     db = SessionLocal()
     dt = datetime.fromisoformat(timestamp)
     entry = MoistureLog(timestamp=dt, moisture_mm=moisture_mm)
@@ -59,7 +71,7 @@ def log_moisture(timestamp: str = Body(...), moisture_mm: float = Body(...)):
     return {"status": "moisture logged"}
 
 @app.post("/log-irrigation")
-def log_irrigation(timestamp: str = Body(...), irrigation_mm: float = Body(...)):
+def log_irrigation(request: Request, timestamp: str = Body(...), irrigation_mm: float = Body(...)):
     db = SessionLocal()
     dt = datetime.fromisoformat(timestamp)
     entry = IrrigationLog(timestamp=dt, irrigation_mm=irrigation_mm)
@@ -69,78 +81,100 @@ def log_irrigation(timestamp: str = Body(...), irrigation_mm: float = Body(...))
     return {"status": "irrigation logged"}
 
 @app.get("/predicted-moisture")
+def predicted_moisture():
+    return get_predicted_moisture()
+    
 def get_predicted_moisture():
-    print("Running /predicted-moisture endpoint")
-
-    if not os.path.exists(MODEL_FILE):
-        raise HTTPException(status_code=500, detail="Model file not found")
-
+    print("[INFO] Running /predicted-moisture")
     try:
-        model = joblib.load(MODEL_FILE)
-        print("Model loaded successfully")
+        if not os.path.exists(MODEL_FILE):
+            return []
 
+        model = joblib.load(MODEL_FILE)
+
+        db = SessionLocal()
+
+        # Determine time range
         now = datetime.utcnow()
-        start_date = (now - timedelta(days=3)).strftime("%Y-%m-%d")
-        end_date = (now + timedelta(days=5)).strftime("%Y-%m-%d")
+        last_ts = get_last_weather_timestamp(db)
+
+        # 3 days history + 5 days forecast
+        start_dt = now - timedelta(days=3)
+        end_dt = now + timedelta(days=5)
+
+        # 🔒 Defensive fix
+        if start_dt > end_dt:
+            print("[WARNING] start_dt is after end_dt, adjusting to fetch past 2 days")
+            start_dt = end_dt - timedelta(days=2)
+
+        start_date = start_dt.strftime("%Y-%m-%d")
+        end_date = end_dt.strftime("%Y-%m-%d")
+
+        print(f"📥 Fetching weather from {start_date} to {end_date}")
 
         url = f"https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/timeline/{LATITUDE},{LONGITUDE}/{start_date}/{end_date}?unitGroup=metric&key={VC_API_KEY}&include=hours&elements=datetime,temp,humidity,windspeed,solarradiation,precip"
-        print(f"Weather API URL: {url}")
-
         response = requests.get(url)
-        print(f"Weather API status code: {response.status_code}")
-
-        if response.status_code != 200:
-            print(f"Weather API response error: {response.text}")
-            raise HTTPException(status_code=500, detail=f"Weather API error: {response.status_code} - {response.text}")
-
         data = response.json()
 
         weather_data = []
+        new_ts = None
+
         for day in data.get("days", []):
             for hour in day.get("hours", []):
                 raw_ts = f"{day['datetime']}T{hour['datetime'][:5]}"
                 solar_radiation = hour.get("solarradiation", 0) or 0
                 et = round(0.408 * solar_radiation / 1000, 3)
+
                 weather_data.append({
                     "timestamp": raw_ts,
                     "ET_mm_hour": et,
                     "rainfall_mm": hour.get("precip", 0) or 0
                 })
 
+                timestamp = datetime.strptime(raw_ts, "%Y-%m-%dT%H:%M")
+                weather_entry = WeatherHistory(
+                    timestamp=timestamp,
+                    et_mm_hour=et,
+                    rainfall_mm=hour.get("precip", 0) or 0,
+                    solar_radiation=solar_radiation,
+                    temp_c=hour.get("temp", 0),
+                    humidity=hour.get("humidity", 0),
+                    windspeed=hour.get("windspeed", 0),
+                )
+                db.merge(weather_entry)
+                new_ts = timestamp
+
+        if new_ts:
+            set_last_weather_timestamp(db, new_ts)
+
         df_weather = pd.DataFrame(weather_data)
         df_weather["timestamp"] = pd.to_datetime(df_weather["timestamp"], format="%Y-%m-%dT%H:%M", errors="coerce")
         df_weather.dropna(subset=["timestamp"], inplace=True)
         df_weather.set_index("timestamp", inplace=True)
 
-        db = SessionLocal()
-        moisture_entries = db.query(MoistureLog).order_by(MoistureLog.timestamp).all()
-        irrigation_entries = db.query(IrrigationLog).order_by(IrrigationLog.timestamp).all()
+        moist_entries = db.query(MoistureLog).all()
+        irrig_entries = db.query(IrrigationLog).all()
+
+        df_moist = pd.DataFrame([
+            {"timestamp": e.timestamp, "moisture_mm": e.moisture_mm} for e in moist_entries
+        ]).set_index("timestamp") if moist_entries else pd.DataFrame(columns=["moisture_mm"])
+
+        df_irrig = pd.DataFrame([
+            {"timestamp": e.timestamp, "irrigation_mm": e.irrigation_mm} for e in irrig_entries
+        ]).set_index("timestamp") if irrig_entries else pd.DataFrame(columns=["irrigation_mm"])
+
         db.close()
-
-        df_moist = pd.DataFrame([{"timestamp": e.timestamp, "moisture_mm": e.moisture_mm} for e in moisture_entries])
-        df_irrig = pd.DataFrame([{"timestamp": e.timestamp, "irrigation_mm": e.irrigation_mm} for e in irrigation_entries])
-
-        if not df_moist.empty:
-            df_moist.set_index("timestamp", inplace=True)
-        else:
-            df_moist = pd.DataFrame(columns=["moisture_mm"])
-            df_moist.index.name = "timestamp"
-
-        if not df_irrig.empty:
-            df_irrig.set_index("timestamp", inplace=True)
-        else:
-            df_irrig = pd.DataFrame(columns=["irrigation_mm"])
-            df_irrig.index.name = "timestamp"
 
         df = df_weather.join(df_irrig, how="left").fillna({"irrigation_mm": 0})
         df = df.sort_index()
+        print("[INFO] Forecast dataframe shape:", df.shape)
 
         results = []
         last_pred = df_moist.iloc[-1]["moisture_mm"] if not df_moist.empty else 25.0
         sample_count = len(df_moist)
+        latest_log_ts = df_moist.index[-1] if not df_moist.empty else None
 
-        print(f"Sample count: {sample_count}")
-
+        print("[INFO] Starting moisture prediction loop")
         for ts, row in df.iterrows():
             hour = ts.hour
             dayofyear = ts.dayofyear
@@ -148,17 +182,23 @@ def get_predicted_moisture():
             rainfall_mm = row.get("rainfall_mm", 0)
             et_mm = row.get("ET_mm_hour", 0)
 
-            features = pd.DataFrame([{ 
-                "prev_moisture": last_pred, 
-                "irrigation_mm": irrigation_mm, 
-                "hour": hour, 
+            features = pd.DataFrame([{
+                "prev_moisture": last_pred,
+                "irrigation_mm": irrigation_mm,
+                "hour": hour,
                 "dayofyear": dayofyear
             }])
 
-            model_pred = model.predict(features)[0]
-            basic_estimate = last_pred - et_mm + rainfall_mm + irrigation_mm
-            alpha = min(sample_count / 50, 1.0)
-            predicted_moisture = (alpha * model_pred) + ((1 - alpha) * basic_estimate)
+            hours_since_last_log = (ts - latest_log_ts).total_seconds() / 3600 if latest_log_ts else float("inf")
+
+            if sample_count < 10 or hours_since_last_log > 48:
+                predicted_moisture = last_pred - et_mm + rainfall_mm + irrigation_mm
+            else:
+                model_pred = model.predict(features)[0]
+                basic_estimate = last_pred - et_mm + rainfall_mm + irrigation_mm
+                alpha = min(sample_count / 100, 0.8)
+                predicted_moisture = (alpha * model_pred) + ((1 - alpha) * basic_estimate)
+
             predicted_moisture = max(min(predicted_moisture, 100), 0)
 
             results.append({
@@ -171,21 +211,25 @@ def get_predicted_moisture():
 
             last_pred = predicted_moisture
 
-        print(f"Returning {len(results)} forecast points.")
+        print(f"[INFO] Returning {len(results)} predicted moisture points")
         return results
 
     except Exception as e:
-        print(f"Unexpected error in predicted moisture: {str(e)}")
+        print(f"[ERROR] Unexpected error in predicted moisture: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+
 
 @app.get("/wilt-forecast")
 def get_wilt_forecast(wilt_point: float = 18.0, upper_limit: float = 22.0):
     predictions = get_predicted_moisture()
 
     for row in predictions:
-        moisture = row["predicted_moisture_mm"]
+        moisture = row.get("predicted_moisture_mm")
+        if moisture is None:
+            continue  # skip any row missing the moisture value
+
         if moisture < wilt_point:
-            ts = row["timestamp"]
+            ts = row.get("timestamp", "unknown time")
             rec_irrig = upper_limit - moisture
             return {
                 "wilt_point_hit": ts,
@@ -194,4 +238,9 @@ def get_wilt_forecast(wilt_point: float = 18.0, upper_limit: float = 22.0):
                 "message": f"Apply approx {round(rec_irrig, 1)} mm to reach {upper_limit}%"
             }
 
-    return {"message": "No wilt point drop expected in forecast."}
+    return {
+        "wilt_point_hit": None,
+        "recommended_irrigation_mm": None,
+        "upper_limit": upper_limit,
+        "message": "No wilt point drop expected in forecast."
+    }
