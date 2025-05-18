@@ -15,7 +15,7 @@ app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://turf-irrigation-dev2.netlify.app", 
+        "https://turf-tracker-dev2.netlify.app", 
         "http://localhost:3000"
     ],
     allow_credentials=True,
@@ -24,11 +24,17 @@ app.add_middleware(
 )
 
 
+
 MODEL_FILE = "moisture_model.pkl"
 LATITUDE = 50.415642
 LONGITUDE = -5.092041
 ELEVATION = 39
 VC_API_KEY = "2ELL5E9A47JT5XB74WGXS7PFV"
+
+
+@app.get("/test-cors")
+def test_cors():
+    return {"message": "CORS working"}
 
 @app.on_event("startup")
 def startup():
