@@ -15,7 +15,7 @@ app = FastAPI()
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-        "https://turf-irrigation-dev2.netlify.app",
+        "https://turf-tracker-dev2.netlify.app/",
         "http://localhost:3000"
     ],
     allow_credentials=True,
