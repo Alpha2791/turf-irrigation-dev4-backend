@@ -32,10 +32,6 @@ ELEVATION = 39
 VC_API_KEY = "2ELL5E9A47JT5XB74WGXS7PFV"
 
 
-@app.get("/test-cors")
-def test_cors():
-    return {"message": "CORS working"}
-
 @app.on_event("startup")
 def startup():
     Base.metadata.create_all(bind=engine)
@@ -181,6 +177,10 @@ def get_predicted_moisture():
         sample_count = len(df_moist)
         latest_log_ts = df_moist.index[-1] if not df_moist.empty else None
 
+        # Filter df to start *after* the last logged moisture reading
+        if latest_log_ts:
+            df = df[df.index > latest_log_ts]
+
         print("[INFO] Starting moisture prediction loop")
         for ts, row in df.iterrows():
             hour = ts.hour
@@ -224,7 +224,6 @@ def get_predicted_moisture():
     except Exception as e:
         print(f"[ERROR] Unexpected error in predicted moisture: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
-
 
 @app.get("/wilt-forecast")
 def get_wilt_forecast(wilt_point: float = 18.0, upper_limit: float = 22.0):
