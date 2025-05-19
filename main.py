@@ -101,11 +101,19 @@ def get_predicted_moisture():
         now = datetime.utcnow()
         last_ts = get_last_weather_timestamp(db)
 
-        # 3 days history + 5 days forecast
-        start_dt = now - timedelta(days=3)
+        # Get last moisture log
+        moist_entries = db.query(MoistureLog).order_by(MoistureLog.timestamp).all()
+        latest_log_ts = moist_entries[-1].timestamp if moist_entries else None
+        sample_count = len(moist_entries)
+
+        # If we have a log, fetch data starting right after the last one
+        if latest_log_ts:
+            start_dt = latest_log_ts + timedelta(hours=1)
+        else:
+            start_dt = now - timedelta(days=3)
+
         end_dt = now + timedelta(days=5)
 
-        # 🔒 Defensive fix
         if start_dt > end_dt:
             print("[WARNING] start_dt is after end_dt, adjusting to fetch past 2 days")
             start_dt = end_dt - timedelta(days=2)
@@ -135,17 +143,21 @@ def get_predicted_moisture():
                 })
 
                 timestamp = datetime.strptime(raw_ts, "%Y-%m-%dT%H:%M")
-                weather_entry = WeatherHistory(
-                    timestamp=timestamp,
-                    et_mm_hour=et,
-                    rainfall_mm=hour.get("precip", 0) or 0,
-                    solar_radiation=solar_radiation,
-                    temp_c=hour.get("temp", 0),
-                    humidity=hour.get("humidity", 0),
-                    windspeed=hour.get("windspeed", 0),
-                )
-                db.merge(weather_entry)
-                new_ts = timestamp
+                try:
+                    weather_entry = WeatherHistory(
+                        timestamp=timestamp,
+                        et_mm_hour=et,
+                        rainfall_mm=hour.get("precip", 0) or 0,
+                        solar_radiation=solar_radiation,
+                        temp_c=hour.get("temp", 0),
+                        humidity=hour.get("humidity", 0),
+                        windspeed=hour.get("windspeed", 0),
+                    )
+                    db.add(weather_entry)
+                    new_ts = timestamp
+                except Exception as e:
+                    db.rollback()
+                    print(f"[SKIP] {timestamp} already exists")
 
         if new_ts:
             set_last_weather_timestamp(db, new_ts)
@@ -155,7 +167,6 @@ def get_predicted_moisture():
         df_weather.dropna(subset=["timestamp"], inplace=True)
         df_weather.set_index("timestamp", inplace=True)
 
-        moist_entries = db.query(MoistureLog).all()
         irrig_entries = db.query(IrrigationLog).all()
 
         df_moist = pd.DataFrame([
@@ -174,12 +185,6 @@ def get_predicted_moisture():
 
         results = []
         last_pred = df_moist.iloc[-1]["moisture_mm"] if not df_moist.empty else 25.0
-        sample_count = len(df_moist)
-        latest_log_ts = df_moist.index[-1] if not df_moist.empty else None
-
-        # Filter df to start *after* the last logged moisture reading
-        if latest_log_ts:
-            df = df[df.index > latest_log_ts]
 
         print("[INFO] Starting moisture prediction loop")
         for ts, row in df.iterrows():
