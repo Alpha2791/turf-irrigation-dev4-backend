@@ -143,21 +143,21 @@ def get_predicted_moisture():
                 })
 
                 timestamp = datetime.strptime(raw_ts, "%Y-%m-%dT%H:%M")
-                try:
+                # Avoid inserting duplicates
+                existing = db.query(WeatherHistory).get(timestamp)
+                if not existing:
                     weather_entry = WeatherHistory(
-                        timestamp=timestamp,
-                        et_mm_hour=et,
-                        rainfall_mm=hour.get("precip", 0) or 0,
-                        solar_radiation=solar_radiation,
-                        temp_c=hour.get("temp", 0),
-                        humidity=hour.get("humidity", 0),
-                        windspeed=hour.get("windspeed", 0),
-                    )
-                    db.add(weather_entry)
-                    new_ts = timestamp
-                except Exception as e:
-                    db.rollback()
-                    print(f"[SKIP] {timestamp} already exists")
+                    timestamp=timestamp,
+                    et_mm_hour=et,
+                    rainfall_mm=hour.get("precip", 0) or 0,
+                    solar_radiation=solar_radiation,
+                    temp_c=hour.get("temp", 0),
+                    humidity=hour.get("humidity", 0),
+                    windspeed=hour.get("windspeed", 0),
+                )
+                db.add(weather_entry)
+                new_ts = timestamp  # only update if new data added
+
 
         if new_ts:
             set_last_weather_timestamp(db, new_ts)
