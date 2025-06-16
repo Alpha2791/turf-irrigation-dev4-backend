@@ -22,7 +22,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
+@app.get("/")
+def root():
+    return {"message": "Turf Tracker Irrigation Forecast API is running"}
 
 
 MODEL_FILE = "moisture_model.pkl"
