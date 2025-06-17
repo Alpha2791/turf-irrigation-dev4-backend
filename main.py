@@ -109,7 +109,11 @@ def get_predicted_moisture():
         df_irrig = pd.DataFrame([
             {"timestamp": e.timestamp, "irrigation_mm": e.irrigation_mm} for e in irrig_entries
         ]).set_index("timestamp") if irrig_entries else pd.DataFrame(columns=["irrigation_mm"])
+        if not df_irrig.empty:
+            df_irrig.index = df_irrig.index.tz_localize(None)
 
+
+        df_moist.index = df_moist.index.tz_localize(None)
         latest_log_ts = df_moist.index[-1] if not df_moist.empty else now
         weather_start = latest_log_ts
         forecast_end = now + timedelta(days=5)
@@ -168,7 +172,9 @@ def get_predicted_moisture():
         df_weather = pd.DataFrame(weather_data)
         df_weather["timestamp"] = pd.to_datetime(df_weather["timestamp"], format="%Y-%m-%dT%H:%M", errors="coerce")
         df_weather.dropna(subset=["timestamp"], inplace=True)
+        df_weather["timestamp"] = df_weather["timestamp"].dt.tz_localize(None)  # <-- this is new
         df_weather.set_index("timestamp", inplace=True)
+
 
         df = df_weather.join(df_irrig, how="left").fillna({"irrigation_mm": 0})
         df = df.sort_index()
